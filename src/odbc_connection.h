@@ -24,6 +24,9 @@ class ODBCConnection : public Nan::ObjectWrap {
   public:
    static Nan::Persistent<String> OPTION_SQL;
    static Nan::Persistent<String> OPTION_PARAMS;
+   static Nan::Persistent<String> OPTION_MESSAGE;
+   static Nan::Persistent<String> OPTION_OPTIONS;
+   static Nan::Persistent<String> OPTION_TIMEOUT;
    static Nan::Persistent<String> OPTION_NORESULTS;
    static Nan::Persistent<Function> constructor;
    
@@ -89,6 +92,18 @@ protected:
     static void UV_AfterQuery(uv_work_t* req, int status);
 
 public:
+    static NAN_METHOD(Subscribe);
+protected:
+    static void UV_Subscribe(uv_work_t* work_req);
+    static void UV_AfterSubscribe(uv_work_t* work_req, int status);
+
+public:
+    static NAN_METHOD(CheckSubscription);
+protected:
+    static void UV_CheckSubscription(uv_work_t* work_req);
+    static void UV_CheckSubscription(uv_work_t* work_req, int status);
+
+public:
     static NAN_METHOD(Columns);
 protected:
     static void UV_Columns(uv_work_t* req);
@@ -97,7 +112,7 @@ public:
     static NAN_METHOD(Tables);
 protected:
     static void UV_Tables(uv_work_t* req);
-    
+
     //sync methods
 public:
     static NAN_METHOD(CloseSync);
@@ -154,6 +169,28 @@ struct query_work_data {
   int sqlSize;
   
   int result;
+};
+
+struct subscribe_work_data {
+    Nan::Callback* cb;
+    ODBCConnection *conn;
+    HSTMT hSTMT;
+
+    void *sql;
+    int sqlLen;
+    int sqlSize;
+
+    void *options;
+    int optionsLen;
+    int optionsSize;
+
+    void *message;
+    int messageLen;
+    int messageSize;
+
+    int timeout;
+
+    int result;
 };
 
 struct open_connection_work_data {

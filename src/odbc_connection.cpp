@@ -33,6 +33,9 @@ using namespace node;
 Nan::Persistent<Function> ODBCConnection::constructor;
 Nan::Persistent<String> ODBCConnection::OPTION_SQL;
 Nan::Persistent<String> ODBCConnection::OPTION_PARAMS;
+Nan::Persistent<String> ODBCConnection::OPTION_MESSAGE;
+Nan::Persistent<String> ODBCConnection::OPTION_OPTIONS;
+Nan::Persistent<String> ODBCConnection::OPTION_TIMEOUT;
 Nan::Persistent<String> ODBCConnection::OPTION_NORESULTS;
 
 void ODBCConnection::Init(v8::Handle<Object> exports) {
@@ -41,6 +44,9 @@ void ODBCConnection::Init(v8::Handle<Object> exports) {
 
   OPTION_SQL.Reset(Nan::New<String>("sql").ToLocalChecked());
   OPTION_PARAMS.Reset(Nan::New<String>("params").ToLocalChecked());
+  OPTION_MESSAGE.Reset(Nan::New<String>("message").ToLocalChecked());
+  OPTION_OPTIONS.Reset(Nan::New<String>("options").ToLocalChecked());
+  OPTION_TIMEOUT.Reset(Nan::New<String>("timeout").ToLocalChecked());
   OPTION_NORESULTS.Reset(Nan::New<String>("noResults").ToLocalChecked());
 
   Local<FunctionTemplate> constructor_template = Nan::New<FunctionTemplate>(New);
@@ -67,7 +73,8 @@ void ODBCConnection::Init(v8::Handle<Object> exports) {
   Nan::SetPrototypeMethod(constructor_template, "createStatementSync", CreateStatementSync);
   Nan::SetPrototypeMethod(constructor_template, "query", Query);
   Nan::SetPrototypeMethod(constructor_template, "querySync", QuerySync);
-  
+  Nan::SetPrototypeMethod(constructor_template, "subscribe", Subscribe);
+
   Nan::SetPrototypeMethod(constructor_template, "beginTransaction", BeginTransaction);
   Nan::SetPrototypeMethod(constructor_template, "beginTransactionSync", BeginTransactionSync);
   Nan::SetPrototypeMethod(constructor_template, "endTransaction", EndTransaction);
@@ -1167,6 +1174,223 @@ NAN_METHOD(ODBCConnection::QuerySync) {
 
     info.GetReturnValue().Set(js_result);
   }
+}
+
+/*
+* Subscribe
+*/
+
+NAN_METHOD(ODBCConnection::Subscribe) {
+    DEBUG_PRINTF("ODBCConnection::Subscribe\n");
+    Nan::HandleScope scope;
+
+    if (info.Length() != 2) {
+        return Nan::ThrowTypeError("ODBCConnection::Subscribe: Requires 2 Arguments. ");
+    }
+
+    if (!info[0]->IsObject()) {
+        return Nan::ThrowTypeError("Argument 0 must be an Object.");
+    }
+    if (!info[1]->IsFunction()) {
+        return Nan::ThrowTypeError("Argument 1 must be a Function.");
+    }
+
+    ODBCConnection* conn = Nan::ObjectWrap::Unwrap<ODBCConnection>(info.Holder());
+
+    uv_work_t* work_req = (uv_work_t *)(calloc(1, sizeof(uv_work_t)));
+    subscribe_work_data* data = (subscribe_work_data*)calloc(1, sizeof(subscribe_work_data));
+
+    Local<String> message;
+    Local<String> service;
+    Local<Object> args = info[0]->ToObject();
+    Local<Function> cb = Local<Function>::Cast(info[1]);
+     
+    { // sql
+        Local<String> sql;
+        Local<String> optionSqlKey = Nan::New(OPTION_SQL);
+        if (args->Has(optionSqlKey) && args->Get(optionSqlKey)->IsString()) {
+            sql = args->Get(optionSqlKey)->ToString();
+        }
+        else {
+            return Nan::ThrowTypeError("Param object must contain sql key.");
+        }
+        data->sqlLen = sql->Length();
+
+#ifdef UNICODE
+        data->sqlSize = (data->sqlLen * sizeof(uint16_t)) + sizeof(uint16_t);
+        data->sql = (uint16_t *)malloc(data->sqlSize);
+        sql->Write((uint16_t *)data->sql);
+#else
+        data->sqlSize = sql->Utf8Length() + 1;
+        data->sql = (char *)malloc(data->sqlSize);
+        sql->WriteUtf8((char *)data->sql);
+#endif
+        DEBUG_PRINTF("ODBCConnection::Subscribe: sqlLen=%i, sqlSize=%i, sql=%s\n",
+            data->sqlLen, data->sqlSize, (char*)data->sql);
+    }
+
+    { // options
+        Local<String> options;
+        Local<String> optionOptoinsKey = Nan::New(OPTION_OPTIONS);
+        if (args->Has(optionOptoinsKey) && args->Get(optionOptoinsKey)->IsString()) {
+            options = args->Get(optionOptoinsKey)->ToString();
+        }
+        else {
+            return Nan::ThrowTypeError("Param object must contain options key.");
+        }
+        data->optionsLen = options->Length();
+
+#ifdef UNICODE
+        data->optionsSize = (data->optionsLen * sizeof(uint16_t)) + sizeof(uint16_t);
+        data->options = (uint16_t *)malloc(data->optionsSize);
+        options->Write((uint16_t *)data->options);
+#else
+        data->optionsSize = options->Utf8Length() + 1;
+        data->options = (char *)malloc(data->optionsSize);
+        options->WriteUtf8((char *)data->options);
+#endif
+        DEBUG_PRINTF("ODBCConnection::Subscribe: optionsLen=%i, optionsSize=%i, options=%s\n",
+            data->optionsLen, data->optionsSize, (char*)data->options);
+    }
+
+    { // message
+        Local<String> message;
+        Local<String> optionMessageKey = Nan::New(OPTION_MESSAGE);
+        if (args->Has(optionMessageKey) && args->Get(optionMessageKey)->IsString()) {
+            message = args->Get(optionMessageKey)->ToString();
+        }
+        else {
+            return Nan::ThrowTypeError("Param object must contain message key.");
+        }
+        data->messageLen = message->Length();
+
+#ifdef UNICODE
+        data->messageSize = (data->messageLen * sizeof(uint16_t)) + sizeof(uint16_t);
+        data->message = (uint16_t *)malloc(data->messageSize);
+        message->Write((uint16_t *)data->message);
+#else
+        data->messageSize = message->Utf8Length() + 1;
+        data->message = (char *)malloc(data->messageSize);
+        message->WriteUtf8((char *)data->message);
+#endif
+        DEBUG_PRINTF("ODBCConnection::Subscribe: messageLen=%i, messageSize=%i, message=%s\n",
+            data->messageLen, data->messageSize, (char*)data->message);
+    }
+
+    { // timeout
+        Local<String> optionTimeoutKey = Nan::New(OPTION_TIMEOUT);
+        if (args->Has(optionTimeoutKey) && args->Get(optionTimeoutKey)->IsNumber()) {
+            data->timeout = (int)args->Get(optionTimeoutKey)->ToNumber()->Value();
+        }
+        else {
+            data->timeout = 0;
+        }
+        DEBUG_PRINTF("ODBCConnection::Subscribe: timeout=%i\n", data->timeout);
+    }
+
+    data->cb = new Nan::Callback(cb);
+
+    data->conn = conn;
+    work_req->data = data;
+
+    uv_queue_work(
+        uv_default_loop(),
+        work_req,
+        UV_Subscribe,
+        (uv_after_work_cb)UV_AfterSubscribe);
+
+    conn->Ref();
+
+    info.GetReturnValue().Set(Nan::Undefined());
+}
+
+void ODBCConnection::UV_Subscribe(uv_work_t* req) {
+    DEBUG_PRINTF("ODBCConnection::UV_Subscribe\n");
+    
+    subscribe_work_data* data = (subscribe_work_data*)(req->data);
+
+    SQLRETURN ret;
+
+    uv_mutex_lock(&ODBC::g_odbcMutex);
+
+    //allocate a new statment handle
+    ret = SQLAllocHandle(SQL_HANDLE_STMT,
+        data->conn->m_hDBC,
+        &data->hSTMT);
+
+    uv_mutex_unlock(&ODBC::g_odbcMutex);
+    
+    if (SQL_SUCCEEDED(ret) && data->message) {
+        ret = SQLSetStmtAttr(data->hSTMT,
+            SQL_SOPT_SS_QUERYNOTIFICATION_MSGTEXT,
+            data->message,
+            SQL_NTS);
+    }
+
+    if (SQL_SUCCEEDED(ret) && data->options) {
+        ret = SQLSetStmtAttr(data->hSTMT,
+            SQL_SOPT_SS_QUERYNOTIFICATION_OPTIONS,
+            static_cast<SQLTCHAR*>(data->options),
+            SQL_NTS);
+    }
+
+    if (SQL_SUCCEEDED(ret) && data->timeout > 0) {
+        ret = SQLSetStmtAttr(data->hSTMT,
+            SQL_SOPT_SS_QUERYNOTIFICATION_TIMEOUT,
+            (SQLPOINTER)data->timeout,
+            SQL_IS_UINTEGER);
+    }
+
+    if (SQL_SUCCEEDED(ret) && data->sql) {
+        ret = SQLExecDirect(data->hSTMT,
+            static_cast<SQLTCHAR*>(data->sql),
+            SQL_NTS);
+    }
+
+    // this will be checked later in UV_AfterSubscribe
+    data->result = ret;
+}
+
+void ODBCConnection::UV_AfterSubscribe(uv_work_t* req, int status) {
+    DEBUG_PRINTF("ODBCConnection::UV_AfterSubscribe\n");
+
+    Nan::HandleScope scope;
+
+    subscribe_work_data* data = (subscribe_work_data*)(req->data);
+
+    Nan::TryCatch try_catch;
+
+    DEBUG_PRINTF("ODBCConnection::UV_AfterSubscribe : data->result=%i\n", data->result);
+
+    Local<Value> info[1];
+    if (!SQL_SUCCEEDED(data->result)) {
+        info[0] = ODBC::GetSQLError(SQL_HANDLE_STMT, data->hSTMT, (char *) "[node-odbc] SQL_ERROR");
+    }
+    else {
+        info[0] = Nan::Null();
+    }
+
+    uv_mutex_lock(&ODBC::g_odbcMutex);
+
+    SQLFreeHandle(SQL_HANDLE_STMT, data->hSTMT);
+
+    uv_mutex_unlock(&ODBC::g_odbcMutex);
+
+    data->cb->Call(1, info);
+    
+    data->conn->Unref();
+
+    if (try_catch.HasCaught()) {
+        Nan::FatalException(try_catch);
+    }
+
+    delete data->cb;
+
+    free(data->sql);
+    free(data->options);
+    free(data->message);
+    free(data);
+    free(req);
 }
 
 /*

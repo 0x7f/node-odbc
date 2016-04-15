@@ -30,6 +30,7 @@
 #include <sql.h>
 #include <sqltypes.h>
 #include <sqlext.h>
+#include <msodbcsql.h>
 #include <sqlucode.h>
 #endif
 

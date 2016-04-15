@@ -11,7 +11,8 @@
       ],
       'cflags' : ['-Wall', '-Wextra', '-Wno-unused-parameter'],
       'include_dirs': [
-        "<!(node -e \"require('nan')\")"
+        "<!(node -e \"require('nan')\")",
+	"C:/Program Files (x86)/Microsoft SQL Server/Client SDK/ODBC/110/SDK/Include/"
       ],
       'defines' : [
         'UNICODE'
